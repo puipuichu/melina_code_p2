@@ -67,7 +67,7 @@ arduino_port = c.arduino_port  # Serial port of Arduino for IR beams
 baud = 9600  # Baud rate for Arduino Uno
 ser = serial.Serial(arduino_port, baud)  # Set up serial read
 ser.reset_input_buffer()  # Clear input buffer before starting
-ser.timeout = 0.1  # Set the timeout for serial communication with Arduino
+ser.timeout = 0.25  # Set the timeout for serial communication with Arduino
 
 # Print a message indicating a successful connection to the Arduino port
 print("Connected to Arduino port: " + arduino_port)
@@ -88,17 +88,12 @@ timeout_status = 0
 identity = ""   # Initialize identity string variable
 IR_bird_status = ""  # Initialize string variable to recognize if IR beam is broken or not
 bird_on_perch = False # variable to handle RFID data -> maybe has to be changed later
-detection_t = 0
 previous_ID = None
 current_sound = None
 pause = False
 sound_reward = False
-wrong_response = False
-hit_response = False
-miss_response = False
 sound_counter = 0
 data = ""
-last_row = ["11:11:11", "3BXXXXXX", "X", "X", "X", "X","X"]
 
 ############################################################################
 #################### Time functions ########################################
@@ -125,7 +120,6 @@ def get_date():
 def play_sound(sound_files_R, sound_files_NR, folder_path_sound_R, folder_path_sound_NR):
     global sound_playing, sound_exit_flag, endsound_t, sound_reward
     global sound_counter
-    global hit_response, wrong_response, miss_response
     global current_sound
     global pause
 
@@ -154,13 +148,9 @@ def play_sound(sound_files_R, sound_files_NR, folder_path_sound_R, folder_path_s
 
             print(sound)
             current_sound = sound
-            wrong_response = False
-            hit_response = False  # Complicated way to update variables
-            miss_response = False
             sound_playing = True
             winsound.PlaySound(os.path.join(folder_path, sound), winsound.SND_FILENAME)
             endsound_t = time.time()
-            sound_playing = True
             time.sleep(7)  # Duration between sounds in seconds
             sound_playing = False
             sound_counter = sound_counter + 1
@@ -182,12 +172,11 @@ def send_message(message):
 
 # Function to read data from the Arduino in a separate thread
 def read_data():
-    prev_data = "nix"
     global data
     while not data_exit_flag:
         data = ser.readline().decode('utf-8').strip()
+        #data = (sys.stdin.readline()).rstrip()
         time.sleep(0.1)
-        prev_data = data
 
 # Function to check if a sound is currently playing
 def is_sound_playing():
@@ -211,10 +200,6 @@ data_thread.start()
 # Activate feeder to reward bird: when bird respond to sound by breaking IR beam
 # Append data to output file
 
-# things to implement
-# 1. write file
-# 2. check conditions, updating of variables
-
 # Open a log file for writing
 with open(fileName, "a", encoding = "UTF8", newline = "") as f:
     writer = csv.writer(f)
@@ -233,43 +218,42 @@ with open(fileName, "a", encoding = "UTF8", newline = "") as f:
                 # Check for IR timeout: in IR timeout if bird is breaking IR beam
                 if reward_status == 0:
 
-                    # Condition 1: startswith "3B" (bird is on perch)                                                        # previous identity to stop constant update?
-                    if data.startswith("3B"):
-                        identity = data # Update identity
-                        bird_on_perch = True
+                    # Condition 1: startswith "3B" (bird is on perch) 
+                    if data.startswith("3B"): 
+                        identity = data
 
-                        # If the bird newly landed on the perch
-                        if identity != previous_ID:
+                        # If the bird newly landed on the perch: update variables
+                        if identity != previous_ID: 
                             previous_ID = data
-                            log_prev_ID = data
-                            detection_t = time.time()
+                            bird_on_perch = True
                             sound_exit_flag = False
                     
                     # Get current time and time elapsed since the end of the last sound  
-                    elif data == "noBird" or data == "Bird":                                
+                    elif not data.startswith("3B"):                                
                         current_t = time.time()
                         time_elapsed = current_t - endsound_t  # endsound_t is taken above in the play sound loop
                         timestamp = get_time()
 
                         # Condition 2: noBird (IR beam not broken)
-                        if data == "noBird" and time_elapsed >= 2 and endsound_t != 0: 
-                            IR_bird_status = "noBird"  
-                            endsound_t = 0                                                                                      # is endsound_t necessary??
-                            bird_on_perch = False                                                                               # is bird_on_perch necessary??
+                        if data == "noBird": 
 
-                            # MISS: rewarded sound is played but no response
-                            if sound_reward == True and wrong_response == False and hit_response == False:
-                                miss_response = True                                                                            # is miss_response necessary??
-                                reaction = "MISS"
+                            # If response time has passed: sound played ended 2 or more seconds ago
+                            if time_elapsed >= 2 and endsound_t != 0:
+                                IR_bird_status = "noBird"
+                                endsound_t = 0                                                                                      
+                                bird_on_perch = False                                                                               
 
-                            # CORREJ: non rewarded sound is played and no response
-                            elif sound_reward == False and wrong_response == False:
-                                miss_response = True
-                                reaction = "CORREJ"
+                                # MISS: rewarded sound is played but no response
+                                if sound_reward == True:
+                                    reaction = "MISS"
 
-                            # Append data
-                            print("no reward - no response") # Print message on screen
-                            writer.writerow([timestamp, identity, IR_bird_status, reward_status, current_sound, sound_reward, reaction])
+                                # CORREJ: non rewarded sound is played and no response
+                                elif sound_reward == False:
+                                    reaction = "CORREJ"
+
+                                # Append data
+                                print("no reward - no response") # Print message on screen
+                                writer.writerow([timestamp, identity, IR_bird_status, reward_status, current_sound, sound_reward, reaction])
 
                         # Condition 3: Bird (IR beam broken)
                         elif data == "Bird":
@@ -279,11 +263,9 @@ with open(fileName, "a", encoding = "UTF8", newline = "") as f:
                             identity = previous_ID
 
                             # Condition 3a: MISS (response without sound)
-                            if sound_playing == False and time_elapsed >= 2 and hit_response == False and identity != None:
+                            if sound_playing == False and time_elapsed >= 2:
                                 IR_bird_status = "Bird"
                                 reward_status = 0
-                                wrong_response = False
-                                miss_response = True
                                 reaction = "MISS"
                                 print("no reward - MISS response")
 
@@ -294,44 +276,41 @@ with open(fileName, "a", encoding = "UTF8", newline = "") as f:
                             else:
                                 IR_bird_status = "Bird"
 
-                                # ...                                                                                          # What is this??
-                                if miss_response == False:
+                                # HIT: respond to rewarded sound
+                                if sound_reward == True:
+                                    
+                                    # Update variables
+                                    reward_status = 1
+                                    reaction = "HIT"
 
-                                    # HIT: respond to rewarded sound
-                                    if sound_reward == True:
-                                        reward_status = 1
-                                        wrong_response = False
-                                        hit_response = True
-                                        reaction = "HIT"
-                                        send_message("motor_on")  # Command to activate feeder through the Arduino
-                                        print("HIT correct response - activate feeder to get a reward") # Print message on screen
-                                        time.sleep(3)  # Short pause to eat before sounds start again
+                                    # Reward bird
+                                    send_message("motor_on")  # Command to activate feeder through the Arduino
+                                    print("HIT correct response - activate feeder to get a reward") # Print message on screen
+                                    time.sleep(3)  # Short pause to eat before sounds start again
 
-                                    # WRONG: respond to non rewarded sound
-                                    elif sound_reward == False:
+                                # WRONG: respond to non rewarded sound
+                                elif sound_reward == False:
 
-                                        # Update variables
-                                        sound_exit_flag = True
-                                        pause = True
-                                        reward_status = 0
-                                        wrong_response = True                                                               # are these variables necessary???
-                                        hit_response = False
-                                        reaction = "WRONG"
-                                        
-                                        # Play noise and print message on screen
-                                        winsound.PlaySound(os.path.join(file_path_noise), winsound.SND_FILENAME)
-                                        print("Response wrong - WRONG sound") 
+                                    # Update variables
+                                    sound_exit_flag = True                  
+                                    pause = True
+                                    reward_status = 0
+                                    reaction = "WRONG"
+                                    
+                                    # Play noise and print message on screen
+                                    winsound.PlaySound(os.path.join(file_path_noise), winsound.SND_FILENAME)
+                                    print("Response wrong - WRONG sound") 
 
-                                        # Time out
-                                        time.sleep(10)
-                                        print("TIMEOUT")
-                                        pause = False
-                                
-                                    # Append data
-                                    writer.writerow([timestamp, identity, IR_bird_status, reward_status, current_sound, sound_reward, reaction])
+                                    # Time out
+                                    time.sleep(10)
+                                    print("TIMEOUT")
+                                    pause = False
+                            
+                                # Append data
+                                writer.writerow([timestamp, identity, IR_bird_status, reward_status, current_sound, sound_reward, reaction])
 
                 # IR timeout function
-                elif reward_status == 1 or wrong_response == True:
+                elif reward_status == 1:
                     sound_exit_flag = True
                     pause = True
 
@@ -345,8 +324,6 @@ with open(fileName, "a", encoding = "UTF8", newline = "") as f:
                     bird_on_perch = False
                     pause = False
                     time_elapsed = 0
-                    wrong_response = False
-                    miss_response = False
 
                 time.sleep(0.1)
 
@@ -355,10 +332,6 @@ with open(fileName, "a", encoding = "UTF8", newline = "") as f:
         # Update data and song exit flag
         data_exit_flag = True
         sound_exit_flag = True
-
-        # Write last row of data
-        writer.writerow(timestamp, identity, IR_bird_status, reward_status, current_sound, sound_reward, reaction)              # check if this works!!
-        time.sleep(0.1)
         
         # Print interruption message on screen
         interruption_time = get_date() + ' - ' + get_time() + '\n'
