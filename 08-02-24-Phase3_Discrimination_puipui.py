@@ -269,9 +269,6 @@ with open(fileName, "a", encoding = "UTF8", newline = "") as f:
                                 reaction = "MISS"
                                 print("no reward - MISS response")
 
-                                # Append data
-                                writer.writerow([timestamp, identity, IR_bird_status, reward_status, current_sound, sound_reward, reaction])        # check conditions to see put where
-
                             # Condition 3b: IR beams broken in time after the sound (HIT or WRONG)
                             else:
                                 IR_bird_status = "Bird"
@@ -306,8 +303,8 @@ with open(fileName, "a", encoding = "UTF8", newline = "") as f:
                                     print("TIMEOUT")
                                     pause = False
                             
-                                # Append data
-                                writer.writerow([timestamp, identity, IR_bird_status, reward_status, current_sound, sound_reward, reaction])
+                            # Append data
+                            writer.writerow([timestamp, identity, IR_bird_status, reward_status, current_sound, sound_reward, reaction])
 
                 # IR timeout function
                 elif reward_status == 1:
